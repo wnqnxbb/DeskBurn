@@ -1,0 +1,2 @@
+# Mac 通过 BLE 扫描并连接 DeskBurn。
+bleak>=0.21,<2

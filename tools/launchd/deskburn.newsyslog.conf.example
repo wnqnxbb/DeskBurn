@@ -1,0 +1,19 @@
+# 推送服务的日志轮转规则。
+#
+# 每 30 秒一行、每行约 95 字节，一年累积 100MB 以上，必须轮转。
+#
+# 先把最后一行的 __LOG_PATH__、__USER__、__GROUP__ 替换为本机实际值，
+# 再安装（需要 root，文件属主必须是 root 否则 newsyslog 会忽略）：
+#   sudo cp tools/launchd/deskburn.newsyslog.conf.example \
+#           /etc/newsyslog.d/deskburn.conf
+#   sudo chown root:wheel /etc/newsyslog.d/deskburn.conf
+#
+# 验证（-n 只演练不实际轮转）：
+#   sudo newsyslog -nv /etc/newsyslog.d/deskburn.conf
+#
+# 卸载：
+#   sudo rm /etc/newsyslog.d/deskburn.conf
+#
+# 字段：文件 属主:组 权限 保留份数 大小(KB) 时间 标志
+# 超过 1MB 时轮转，保留 3 份并用 gzip 压缩（J 标志）。
+__LOG_PATH__ __USER__:__GROUP__ 644 3 1024 * J

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  DeskBurn 登录自启服务模板。
+
+  不要直接复制本文件。运行 `python tools/install_launchd.py install`，
+  安装器会把下面的三个占位符替换成当前环境的绝对路径并加载服务。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deskburn.agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON_EXECUTABLE__</string>
+    <string>-m</string>
+    <string>ccswitch_agent</string>
+    <string>--serve</string>
+  </array>
+
+  <!-- -m ccswitch_agent 需要在包的父目录下才能解析。 -->
+  <key>WorkingDirectory</key>
+  <string>__TOOLS_DIRECTORY__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 进程内部已有重连循环，KeepAlive 只兜底真正的崩溃。 -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- 崩溃后至少间隔 30 秒再拉起，避免出错时刷满日志。 -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!--
+    日志放 ~/Library/Logs 而不是 /tmp：/tmp 会被系统按存活时长清理，
+    重启后日志可能已经不在，恰好丢掉排障最需要的那一段。
+
+    轮转由 newsyslog 配置负责，见
+    tools/launchd/deskburn.newsyslog.conf.example。
+    每 30 秒一行、每行约 95 字节，一年会累积 100MB 以上，不能不管。
+  -->
+  <key>StandardOutPath</key>
+  <string>__LOG_PATH__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_PATH__</string>
+</dict>
+</plist>
