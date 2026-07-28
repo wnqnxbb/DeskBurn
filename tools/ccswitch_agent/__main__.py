@@ -34,11 +34,11 @@ def format_tokens(tokens: int) -> str:
     只有到十亿量级才切 B，几亿仍然写成 M。
     """
     if tokens >= 1_000_000_000:
-        return f"{tokens / 1_000_000_000:.2f}B"
+        return f"{tokens / 1_000_000_000:.2f} B"
     if tokens >= 1_000_000:
-        return f"{tokens / 1_000_000:.2f}M"
+        return f"{tokens / 1_000_000:.2f} M"
     if tokens >= 1_000:
-        return f"{tokens / 1_000:.1f}K"
+        return f"{tokens / 1_000:.1f} K"
     return str(tokens)
 
 

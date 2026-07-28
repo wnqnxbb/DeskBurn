@@ -38,6 +38,10 @@ COST_PIXEL_SIZE = 50
 # 美元符号比数字小一档，作为前缀不与金额本身争夺注意力。
 CURRENCY_PIXEL_SIZE = 32
 
+# 周期 Token 使用比旧 Font2 更大的 SF Pro Bold。22px 的实际笔画高 16px，
+# 最宽的 "999.99 M" 约 97px，能完整放进 107px 宽的三栏。
+PERIOD_TOKEN_PIXEL_SIZE = 22
+
 # 图标是装饰性元素，尺寸压在今日金额（48px）之下，避免抢走视觉重心。
 LOGO_SIZE = 34
 
@@ -145,6 +149,49 @@ def render_cost_glyphs() -> tuple[list[tuple[str, Image.Image]], int, int]:
     return rendered, digit_cell, bottom - top
 
 
+def render_period_token_glyphs(
+) -> tuple[list[tuple[str, Image.Image]], int, int, int]:
+    """烘焙周期 Token 使用的粗体数字与 K / M / B 单位字形。
+
+    数字使用统一格子，避免数值变化时同位数字左右晃动；小数点和单位保留各自
+    的前进宽度，把最长文本控制在每栏 107px 以内。所有字形共用同一条基线和
+    垂直包围盒，固件可以逐格平铺并用一个矩形完成局部擦除。
+
+    @return 字形列表、数字格子宽度、字形高度、空格前进宽度。
+    """
+    font = load_cost_font(PERIOD_TOKEN_PIXEL_SIZE)
+    digits = "0123456789"
+    glyphs = digits + ".KMB"
+    digit_cell = max(round(font.getlength(digit)) for digit in digits)
+
+    baseline = PERIOD_TOKEN_PIXEL_SIZE * 2
+    probe = Image.new(
+        "L", (PERIOD_TOKEN_PIXEL_SIZE * 3, PERIOD_TOKEN_PIXEL_SIZE * 3), 0
+    )
+    top, bottom = probe.height, 0
+    for glyph in glyphs:
+        canvas = probe.copy()
+        ImageDraw.Draw(canvas).text(
+            (PERIOD_TOKEN_PIXEL_SIZE, baseline), glyph,
+            font=font, fill=255, anchor="ls"
+        )
+        box = canvas.getbbox()
+        top, bottom = min(top, box[1]), max(bottom, box[3])
+
+    rendered: list[tuple[str, Image.Image]] = []
+    for glyph in glyphs:
+        cell = digit_cell if glyph in digits else round(font.getlength(glyph))
+        canvas = Image.new("L", (cell, bottom - top), 0)
+        ImageDraw.Draw(canvas).text(
+            (cell / 2, baseline - top), glyph,
+            font=font, fill=255, anchor="ms"
+        )
+        rendered.append((glyph, canvas))
+
+    space_width = round(font.getlength(" "))
+    return rendered, digit_cell, bottom - top, space_width
+
+
 def render_currency_alpha() -> Image.Image:
     """烘焙美元符号。它独立居中对齐，所以按实际笔画裁剪即可。"""
     font = load_cost_font(CURRENCY_PIXEL_SIZE)
@@ -223,6 +270,29 @@ def main() -> None:
         f"const AlphaBitmap* const kCostDigits[10] = {{{digit_list}}};\n"
         f"constexpr uint16_t kCostDigitCellWidth = {digit_cell};\n"
         f"constexpr uint16_t kCostGlyphHeight = {glyph_height};\n"
+    )
+
+    token_glyphs, token_digit_cell, token_glyph_height, token_space_width = (
+        render_period_token_glyphs()
+    )
+    sections.append(
+        f"// 周期 Token 字形，SF Pro Bold {PERIOD_TOKEN_PIXEL_SIZE}px。"
+        "数字使用统一格子，单位按实际宽度排版。"
+    )
+    for glyph, mask in token_glyphs:
+        label = "Dot" if glyph == "." else glyph
+        sections.append(format_array(f"kPeriodTokenGlyph{label}", mask))
+
+    token_digit_list = ", ".join(
+        f"&kPeriodTokenGlyph{digit}" for digit in "0123456789"
+    )
+    sections.append(
+        "// 周期 Token 的动态字形表与统一尺寸。\n"
+        "const AlphaBitmap* const kPeriodTokenDigits[10] = "
+        f"{{{token_digit_list}}};\n"
+        f"constexpr uint16_t kPeriodTokenDigitCellWidth = {token_digit_cell};\n"
+        f"constexpr uint16_t kPeriodTokenGlyphHeight = {token_glyph_height};\n"
+        f"constexpr uint16_t kPeriodTokenSpaceWidth = {token_space_width};\n"
     )
 
     header = f"""/**

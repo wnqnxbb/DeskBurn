@@ -79,7 +79,7 @@ Token 不传原始计数是实测约束：总计已到 18 亿且每月涨约 15 
 
 两个 PlatformIO env 共用 `src_dir = firmware`，靠 `build_src_filter` 隔离；统一用 `.cpp`（`.ino` 会被 PlatformIO 合并，两个固件的 setup/loop 会重复定义）。
 
-- `deskburn/deskburn.cpp` —— 渲染。局部刷新核心规则：每个 TextSlot 记住上一次内容，只擦旧包围盒再画新内容，绝不整行清屏（会把同高度的图标标签一起擦掉）。`Layout` 里的 Y 坐标是按各元素真实高度排满 240px 的，周期金额与周期 Token 之间只剩 2px 空隙，改坐标前先重算擦除带（擦除会在包围盒外多留 2px）。推送 alpha 位图期间要 `setSwapBytes(true)`（RGB565 字节序）。渲染在主循环每秒轮询，不在 BLE 回调里刷屏——SPI 会拖住蓝牙栈，且 OFFLINE 切换是超时驱动、没有回调可挂。
+- `deskburn/deskburn.cpp` —— 渲染。局部刷新核心规则：每个动态区域记住上一次内容，只擦旧包围盒再画新内容，绝不整行清屏（会把同高度的图标标签一起擦掉）。`Layout` 里的 Y 坐标按各元素真实高度排满 240px，周期金额与粗体 Token 的擦除带相邻但不重叠，改坐标或字号前必须重新计算。推送 alpha 位图期间要 `setSwapBytes(true)`（RGB565 字节序）。渲染在主循环每秒轮询，不在 BLE 回调里刷屏——SPI 会拖住蓝牙栈，且 OFFLINE 切换是超时驱动、没有回调可挂。
 - `deskburn/link_ble.h` —— NimBLE 从机（比 Bluedroid 省约 100KB RAM），Mac 作 central 主动连。校验通过才更新 `g_state`；仅数值变化时写 NVS（flash 擦写寿命有限）；上电从 NVS 恢复历史值但标 OFFLINE。未启用配对加密是有意取舍（包里只有聚合数字）。
 - `deskburn/assets.h` —— 生成产物：SVG 图标、中文标签、金额字形的 8 位 alpha 蒙版，运行时上色。
 - `pin_scanner/` —— 自带最小 SPI 驱动的排障固件，一次烧录内运行时轮换引脚和初始化序列假设，换屏时先跑它。

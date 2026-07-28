@@ -27,7 +27,9 @@ constexpr uint16_t kPrimaryText = TFT_WHITE;
 constexpr uint16_t kTodayCost = 0x4EF0;
 constexpr uint16_t kSecondaryText = 0xAD55;
 constexpr uint16_t kDivider = 0x2945;
-constexpr uint16_t kFootnote = 0x52AA;
+// 在线复用今日金额的亮绿色；离线用柔和红色（#F87171），暗背景上醒目但不刺眼。
+constexpr uint16_t kStatusOnline = kTodayCost;
+constexpr uint16_t kStatusOffline = 0xFB8E;
 }  // namespace Colors
 
 namespace Layout {
@@ -35,10 +37,9 @@ namespace Layout {
 // 再往下是今日 Token 数，分隔线之下是本周 / 本月 / 总计三栏，每栏金额下面再挂
 // 一行该周期的 Token 数。
 //
-// 纵向坐标是按各元素的实际包围盒排下来的，加第二行 Token 时整体上移过一次：
-// 240 高扣掉三行文字后余量很小，改任何一个常量前先按下面的注释重算间距，
-// 尤其是 kPeriodCostY 与 kPeriodTokensY —— updateSlot 擦除时会向外多留 2px，
-// 两者靠太近会互相啃掉对方的像素。
+// 纵向坐标按各元素的实际包围盒排布。周期金额略微下移，拉开它与标签的距离；
+// Token 换成 22px SF Pro Bold 后也同步下移，让两组内容的视觉间距更均衡。
+// 两种动态文字的擦除矩形不能相交，否则数值刷新时会啃掉相邻行的像素。
 constexpr int16_t kCenterX = 160;
 
 constexpr int16_t kHeaderY = 32;         // 图标 34px 高，占 15..49
@@ -46,8 +47,8 @@ constexpr int16_t kTodayCostY = 80;      // 字形 38px 高，擦除带占 57..1
 constexpr int16_t kTodayTokensY = 124;   // Font4 26px 高，擦除带占 109..139
 constexpr int16_t kDividerY = 148;
 constexpr int16_t kPeriodLabelY = 168;   // 标签 23px 高，占 157..180
-constexpr int16_t kPeriodCostY = 197;    // Font4 擦除带占 182..212
-constexpr int16_t kPeriodTokensY = 224;  // Font2 擦除带占 214..234
+constexpr int16_t kPeriodCostY = 200;    // Font4 擦除带占 185..215
+constexpr int16_t kPeriodTokensY = 226;  // 粗体字形擦除带占 216..236
 
 // 标题行里「今日消耗」与两侧图标之间的留白。两枚图标相对屏幕中心对称摆放，
 // 具体坐标在 drawStaticLayout 里按各自蒙版宽度算，换图标不用改这里。
@@ -66,9 +67,6 @@ constexpr int16_t kFootnoteY = 12;
 // 金额与美元符号不再用内置字体，改用 assets.h 里烘焙的 SF Pro Bold 字形。
 constexpr uint8_t kTokensFont = 4;
 constexpr uint8_t kPeriodCostFont = 4;
-// 三栏下面那行 Token 用更小的 Font2：它是给金额做注解的，字号压下去才不会跟
-// 金额抢视线，也才在剩下的十几像素里排得开。
-constexpr uint8_t kPeriodTokensFont = 2;
 constexpr uint8_t kFootnoteFont = 1;
 }  // namespace Layout
 
@@ -91,32 +89,49 @@ TFT_eSPI display = TFT_eSPI();
  * @brief 一块可独立重绘的居中文字区域。
  *
  * 记住上一次渲染的字符串，只有内容变化时才擦除旧包围盒并重画，
- * 避免每次刷新都整屏重绘导致的闪烁。
+ * 避免每次刷新都整屏重绘导致的闪烁。bold 为 true 时额外透明叠绘 1px，
+ * 给不带粗体字重的 TFT_eSPI 内置字体加粗。
  */
 struct TextSlot {
   int16_t centerX;
   int16_t centerY;
   uint8_t font;
   uint16_t color;
+  bool bold;
   char current[24];
 };
 
+/**
+ * @brief 一块使用自定义粗体字形的周期 Token 区域。
+ *
+ * 除了缓存字符串，还记录上一次实际占用的横向范围，保证数值变短时只擦掉旧字，
+ * 不碰同一行的其他栏位。
+ */
+struct PeriodTokenSlot {
+  int16_t centerX;
+  int16_t centerY;
+  uint16_t color;
+  char current[12];
+  int16_t left;
+  int16_t width;
+};
+
 TextSlot g_todayTokensSlot{Layout::kCenterX, Layout::kTodayTokensY,
-                           Layout::kTokensFont, Colors::kSecondaryText, ""};
+                           Layout::kTokensFont, Colors::kSecondaryText, true, ""};
 TextSlot g_weekCostSlot{Layout::kWeekColumnX, Layout::kPeriodCostY,
-                        Layout::kPeriodCostFont, Colors::kPrimaryText, ""};
+                        Layout::kPeriodCostFont, Colors::kPrimaryText, false, ""};
 TextSlot g_monthCostSlot{Layout::kMonthColumnX, Layout::kPeriodCostY,
-                         Layout::kPeriodCostFont, Colors::kPrimaryText, ""};
+                         Layout::kPeriodCostFont, Colors::kPrimaryText, false, ""};
 TextSlot g_totalCostSlot{Layout::kTotalColumnX, Layout::kPeriodCostY,
-                         Layout::kPeriodCostFont, Colors::kPrimaryText, ""};
-TextSlot g_weekTokensSlot{Layout::kWeekColumnX, Layout::kPeriodTokensY,
-                          Layout::kPeriodTokensFont, Colors::kSecondaryText, ""};
-TextSlot g_monthTokensSlot{Layout::kMonthColumnX, Layout::kPeriodTokensY,
-                           Layout::kPeriodTokensFont, Colors::kSecondaryText, ""};
-TextSlot g_totalTokensSlot{Layout::kTotalColumnX, Layout::kPeriodTokensY,
-                           Layout::kPeriodTokensFont, Colors::kSecondaryText, ""};
+                         Layout::kPeriodCostFont, Colors::kPrimaryText, false, ""};
+PeriodTokenSlot g_weekTokensSlot{Layout::kWeekColumnX, Layout::kPeriodTokensY,
+                                 Colors::kSecondaryText, "", 0, 0};
+PeriodTokenSlot g_monthTokensSlot{Layout::kMonthColumnX, Layout::kPeriodTokensY,
+                                  Colors::kSecondaryText, "", 0, 0};
+PeriodTokenSlot g_totalTokensSlot{Layout::kTotalColumnX, Layout::kPeriodTokensY,
+                                  Colors::kSecondaryText, "", 0, 0};
 TextSlot g_footnoteSlot{Layout::kFootnoteX, Layout::kFootnoteY,
-                        Layout::kFootnoteFont, Colors::kFootnote, ""};
+                        Layout::kFootnoteFont, Colors::kStatusOffline, false, ""};
 
 // 今日金额横跨两种字体，单独缓存数字部分和上一次占用的矩形。
 char g_todayCostCurrent[16] = "";
@@ -188,8 +203,9 @@ void drawAlphaBitmap(
 /**
  * @brief 把 Token 数格式化为 K / M / B 紧凑写法，不带单位后缀。
  *
- * 只有真的到了十亿量级才切 B：234M 写成 0.23B 会丢掉一位有效数字，而三栏的
- * 宽度放得下 "999.99M"，没有必要提前换单位。
+ * 只有真的到了十亿量级才切 B：234 M 写成 0.23 B 会丢掉一位有效数字，而三栏
+ * 的宽度放得下 "999.99 M"，没有必要提前换单位。数值和单位之间保留一个空格，
+ * 让今日行与三栏的量纲更容易识别。
  *
  * @param tokens 原始 Token 数。
  * @param out 输出缓冲区。
@@ -197,11 +213,11 @@ void drawAlphaBitmap(
  */
 void formatTokensCompact(uint64_t tokens, char* out, size_t size) {
   if (tokens >= 1000000000ULL) {
-    snprintf(out, size, "%.2fB", tokens / 1000000000.0);
+    snprintf(out, size, "%.2f B", tokens / 1000000000.0);
   } else if (tokens >= 1000000ULL) {
-    snprintf(out, size, "%.2fM", tokens / 1000000.0);
+    snprintf(out, size, "%.2f M", tokens / 1000000.0);
   } else if (tokens >= 1000ULL) {
-    snprintf(out, size, "%.1fK", tokens / 1000.0);
+    snprintf(out, size, "%.1f K", tokens / 1000.0);
   } else {
     snprintf(out, size, "%llu", static_cast<unsigned long long>(tokens));
   }
@@ -247,7 +263,7 @@ void formatPeriodCost(float costUsd, char* out, size_t size) {
  * @brief 只在内容变化时重绘一块文字区域。
  *
  * 先按上一次的字符串宽度擦除旧包围盒，再画新内容，因此数字变短时不会留下
- * 残影，也不需要重绘整屏。
+ * 残影，也不需要重绘整屏。粗体槽位会在右侧多占 1px，擦除时同步覆盖这部分。
  */
 void updateSlot(TextSlot& slot, const char* text) {
   if (strcmp(slot.current, text) == 0) {
@@ -257,10 +273,11 @@ void updateSlot(TextSlot& slot, const char* text) {
   if (slot.current[0] != '\0') {
     const int16_t previousWidth = display.textWidth(slot.current, slot.font);
     const int16_t height = display.fontHeight(slot.font);
+    const int16_t boldExtraWidth = slot.bold ? 1 : 0;
     display.fillRect(
         slot.centerX - previousWidth / 2 - 2,
         slot.centerY - height / 2 - 2,
-        previousWidth + 4,
+        previousWidth + 4 + boldExtraWidth,
         height + 4,
         Colors::kBackground
     );
@@ -272,6 +289,112 @@ void updateSlot(TextSlot& slot, const char* text) {
   display.setTextDatum(MC_DATUM);
   display.setTextColor(slot.color, Colors::kBackground);
   display.drawString(text, slot.centerX, slot.centerY, slot.font);
+
+  if (slot.bold) {
+    // 第二遍必须透明绘制；若继续带背景色，会先擦掉第一遍右侧刚加出的笔画。
+    display.setTextColor(slot.color);
+    display.drawString(text, slot.centerX + 1, slot.centerY, slot.font);
+  }
+}
+
+/**
+ * @brief 取得周期 Token 中单个字符对应的 alpha 字形。
+ *
+ * @param character formatTokensCompact 可能输出的数字、小数点或单位字符。
+ * @return 对应字形；字符不在紧凑格式集合中时返回 nullptr。
+ */
+const AlphaBitmap* periodTokenGlyph(char character) {
+  if (character >= '0' && character <= '9') {
+    return Assets::kPeriodTokenDigits[character - '0'];
+  }
+
+  switch (character) {
+    case '.':
+      return &Assets::kPeriodTokenGlyphDot;
+    case 'K':
+      return &Assets::kPeriodTokenGlyphK;
+    case 'M':
+      return &Assets::kPeriodTokenGlyphM;
+    case 'B':
+      return &Assets::kPeriodTokenGlyphB;
+    default:
+      return nullptr;
+  }
+}
+
+/**
+ * @brief 取得周期 Token 单个字符的横向前进宽度。
+ *
+ * 空格不需要位图，只推进生成器按同一字体量出的 4px；其他字符使用实际字形宽度。
+ *
+ * @param character 紧凑 Token 文本中的字符。
+ * @return 字符占用的像素宽度，未知字符返回 0。
+ */
+int16_t periodTokenCharacterWidth(char character) {
+  if (character == ' ') {
+    return Assets::kPeriodTokenSpaceWidth;
+  }
+
+  const AlphaBitmap* glyph = periodTokenGlyph(character);
+  return glyph == nullptr ? 0 : glyph->width;
+}
+
+/**
+ * @brief 计算一段紧凑 Token 文本使用自定义字形时的像素宽度。
+ *
+ * @param text formatTokensCompact 生成的字符串。
+ * @return 所有有效字形宽度之和。
+ */
+int16_t periodTokenTextWidth(const char* text) {
+  int16_t width = 0;
+  for (const char* character = text; *character != '\0'; ++character) {
+    width += periodTokenCharacterWidth(*character);
+  }
+  return width;
+}
+
+/**
+ * @brief 只在内容变化时重绘一栏粗体周期 Token。
+ *
+ * 新字形是 22px SF Pro Bold 的抗锯齿蒙版，实际笔画高 16px。擦除区域按上一次
+ * 的真实宽度加 2px 外边距计算，既能清掉抗锯齿边缘，也不会覆盖相邻金额行。
+ *
+ * @param slot 要更新的周期 Token 区域。
+ * @param text formatTokensCompact 生成的紧凑文本。
+ */
+void updatePeriodTokenSlot(PeriodTokenSlot& slot, const char* text) {
+  if (strcmp(slot.current, text) == 0) {
+    return;
+  }
+
+  if (slot.width > 0) {
+    const int16_t bandHeight = Assets::kPeriodTokenGlyphHeight + 4;
+    display.fillRect(slot.left - 2, slot.centerY - bandHeight / 2,
+                     slot.width + 4, bandHeight, Colors::kBackground);
+  }
+
+  strncpy(slot.current, text, sizeof(slot.current) - 1);
+  slot.current[sizeof(slot.current) - 1] = '\0';
+  slot.width = periodTokenTextWidth(slot.current);
+  slot.left = slot.centerX - slot.width / 2;
+
+  int16_t cursor = slot.left;
+  for (const char* character = slot.current; *character != '\0'; ++character) {
+    // 空格只移动游标，不推送透明位图，减少一次无意义的 SPI 绘制。
+    if (*character == ' ') {
+      cursor += Assets::kPeriodTokenSpaceWidth;
+      continue;
+    }
+
+    const AlphaBitmap* glyph = periodTokenGlyph(*character);
+    if (glyph == nullptr) {
+      continue;
+    }
+
+    // 每个字形按自己的格子中心绘制，数字等宽、单位保持自然宽度。
+    drawAlphaBitmap(*glyph, cursor + glyph->width / 2, slot.centerY, slot.color);
+    cursor += glyph->width;
+  }
 }
 
 /**
@@ -393,14 +516,17 @@ void renderDashboard(const DashboardData& data) {
 
   char periodTokens[12];
   formatTokensCompact(data.weekTokens, periodTokens, sizeof(periodTokens));
-  updateSlot(g_weekTokensSlot, periodTokens);
+  updatePeriodTokenSlot(g_weekTokensSlot, periodTokens);
 
   formatTokensCompact(data.monthTokens, periodTokens, sizeof(periodTokens));
-  updateSlot(g_monthTokensSlot, periodTokens);
+  updatePeriodTokenSlot(g_monthTokensSlot, periodTokens);
 
   formatTokensCompact(data.totalTokens, periodTokens, sizeof(periodTokens));
-  updateSlot(g_totalTokensSlot, periodTokens);
+  updatePeriodTokenSlot(g_totalTokensSlot, periodTokens);
 
+  // 状态文字翻转时 updateSlot 会重绘；先切颜色即可让在线和离线有明确色彩提示。
+  g_footnoteSlot.color =
+      data.online ? Colors::kStatusOnline : Colors::kStatusOffline;
   updateSlot(g_footnoteSlot, data.online ? "LIVE" : "OFFLINE");
 }
 
