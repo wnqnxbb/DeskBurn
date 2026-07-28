@@ -5,7 +5,7 @@
  * 必须与 tools/ccswitch_agent/protocol.py 保持字节级一致。改动任何字段都要
  * 同步改那个文件，并升 kProtocolVersion。
  *
- * 固定 30 字节小端包，没有变长字段，因此可以直接 memcpy 到结构体，不需要
+ * 固定 42 字节小端包，没有变长字段，因此可以直接 memcpy 到结构体，不需要
  * 解析器，也不会因为畸形输入导致越界。
  */
 
@@ -26,32 +26,41 @@ constexpr char kDeviceName[] = "DeskBurn";
 
 constexpr uint16_t kMagic = 0xCC57;
 
-/// v2 在 monthMilliUsd 之后插入了 totalMilliUsd。版本号不符的包整个丢弃，
-/// 因此新旧两端混用时屏幕显示 OFFLINE，而不是把字段错位读成乱数。
-constexpr uint8_t kProtocolVersion = 2;
+/// v3 给本周 / 本月 / 总计各补了一个 Token 字段，并把全部 Token 改成千 token
+/// 计量。版本号不符的包整个丢弃，因此新旧两端混用时屏幕显示 OFFLINE，而不是
+/// 把字段错位读成乱数。
+constexpr uint8_t kProtocolVersion = 3;
 
-/// 金额以千分之一美元的整数传输，避开设备端的浮点运算和字节序问题。
+/// 金额以千分之一美元的整数传输，Token 以千 token 的整数传输，两者都避开了
+/// 设备端的浮点运算和字节序问题。
+///
+/// Token 不传原始数：总计实测已到 18 亿并每月增长约 15 亿，u32 的 42.9 亿撑不
+/// 了多久；而换成 u64 会让下面 State 里「32 位读写原子」的假设失效，BLE 回调
+/// 写到一半被主循环读走就会渲染出乱数。屏幕最细只显示到 0.01M，千位精度够用。
 struct __attribute__((packed)) UsagePacket {
   uint16_t magic;
   uint8_t version;
   uint8_t flags;
   uint32_t todayMilliUsd;
-  uint32_t todayTokens;
+  uint32_t todayKiloTokens;
   uint32_t weekMilliUsd;
+  uint32_t weekKiloTokens;
   uint32_t monthMilliUsd;
+  uint32_t monthKiloTokens;
   uint32_t totalMilliUsd;
+  uint32_t totalKiloTokens;
   uint32_t epoch;
   uint16_t crc;
 };
 
-constexpr size_t kPacketSize = 30;
+constexpr size_t kPacketSize = 42;
 static_assert(sizeof(UsagePacket) == kPacketSize,
               "包结构与 protocol.py 不一致");
 
 /**
  * @brief CRC-16/CCITT-FALSE。
  *
- * 用位运算而不是查表：包只有 24 字节，算得快慢无关紧要，省下 512 字节的
+ * 用位运算而不是查表：包只有 40 字节，算得快慢无关紧要，省下 512 字节的
  * 表更值。
  */
 inline uint16_t crc16Ccitt(const uint8_t* data, size_t length) {

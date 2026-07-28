@@ -67,11 +67,10 @@ async def _push_loop(client: BleakClient, db_path: Path) -> None:
                 protocol.encode(snapshot),
                 response=False,
             )
-            line = (f"today=${snapshot.today_cost_usd:.2f} "
-                    f"tokens={snapshot.today_tokens} "
-                    f"week=${snapshot.week_cost_usd:.2f} "
-                    f"month=${snapshot.month_cost_usd:.2f} "
-                    f"total=${snapshot.total_cost_usd:.2f}")
+            line = (f"today=${snapshot.today_cost_usd:.2f}/{snapshot.today_tokens} "
+                    f"week=${snapshot.week_cost_usd:.2f}/{snapshot.week_tokens} "
+                    f"month=${snapshot.month_cost_usd:.2f}/{snapshot.month_tokens} "
+                    f"total=${snapshot.total_cost_usd:.2f}/{snapshot.total_tokens}")
             if line != last_line:
                 logger.info("pushed %s", line)
                 last_line = line
@@ -131,8 +130,11 @@ async def _push_fake(client: BleakClient) -> None:
             today_cost_usd=snapshot.today_cost_usd + 0.37,
             today_tokens=snapshot.today_tokens + 285_000,
             week_cost_usd=snapshot.week_cost_usd,
+            week_tokens=snapshot.week_tokens + 285_000,
             month_cost_usd=snapshot.month_cost_usd,
+            month_tokens=snapshot.month_tokens + 285_000,
             total_cost_usd=snapshot.total_cost_usd + 0.37,
+            total_tokens=snapshot.total_tokens + 285_000,
             updated_at=snapshot.updated_at,
         )
         await asyncio.sleep(PUSH_INTERVAL_SECONDS)

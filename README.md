@@ -3,14 +3,15 @@
 放在工位上的 AI Token 与费用实时消耗屏。
 
 DeskBurn 使用 ESP32-C3 驱动一块 3.5 寸 TFT 屏幕。Mac 端只读 CC Switch 的
-本地 SQLite 数据库，计算今日、本周、本月和累计费用，再通过 BLE 每 30 秒推送
-到屏幕。整个链路不需要云服务，也不会把 Prompt、回复正文或 API Key 发给设备。
+本地 SQLite 数据库，计算今日、本周、本月和累计的费用与 Token 数，再通过 BLE
+每 30 秒推送到屏幕。整个链路不需要云服务，也不会把 Prompt、回复正文或 API Key
+发给设备。
 
 ![DeskBurn 实机与 CC Switch 数据对照](docs/images/deskburn-demo.jpg)
 
 ## 特性
 
-- 今日费用和 Token 数突出显示，本周、本月和累计费用分栏展示。
+- 今日费用和 Token 数突出显示，本周、本月和累计分栏展示费用与 Token 数。
 - Mac 侧以 SQLite 只读模式访问 CC Switch 数据库。
 - 使用 BLE 直连，不依赖 Wi-Fi、局域网连通性或公网中转。
 - 断线后保留最后一次有效数据，并在 90 秒超时后显示 `OFFLINE`。
