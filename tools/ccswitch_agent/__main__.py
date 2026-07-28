@@ -28,7 +28,13 @@ LOG_PATH = Path.home() / "Library" / "Logs" / "deskburn-agent.log"
 
 
 def format_tokens(tokens: int) -> str:
-    """按屏幕上的紧凑格式显示 Token 数，便于逐字符核对固件的实现。"""
+    """按屏幕上的紧凑格式显示 Token 数，便于逐字符核对固件的实现。
+
+    分档必须与 firmware/deskburn/deskburn.cpp 的 formatTokensCompact 一致：
+    只有到十亿量级才切 B，几亿仍然写成 M。
+    """
+    if tokens >= 1_000_000_000:
+        return f"{tokens / 1_000_000_000:.2f}B"
     if tokens >= 1_000_000:
         return f"{tokens / 1_000_000:.2f}M"
     if tokens >= 1_000:
@@ -40,12 +46,18 @@ def format_human(snapshot: UsageSnapshot) -> str:
     stamp = time.strftime("%H:%M:%S", time.localtime(snapshot.updated_at))
     # 对账时看的是分位，所以这里保留两位小数，不套用屏幕上的整元格式。
     # 屏幕显示 $1652 而 CLI 显示 $1651.86 是预期的，不是两边算错了。
+    #
+    # Token 数也和屏幕有个预期内的差异：链路按千 token 传输，屏幕上是取整过的，
+    # 这里打的是原始值。
     return (
         f"TODAY       ${snapshot.today_cost_usd:.2f}"
         f"  ({format_tokens(snapshot.today_tokens)} tokens)\n"
-        f"THIS WEEK   ${snapshot.week_cost_usd:.2f}\n"
-        f"THIS MONTH  ${snapshot.month_cost_usd:.2f}\n"
-        f"ALL TIME    ${snapshot.total_cost_usd:.2f}\n"
+        f"THIS WEEK   ${snapshot.week_cost_usd:.2f}"
+        f"  ({format_tokens(snapshot.week_tokens)} tokens)\n"
+        f"THIS MONTH  ${snapshot.month_cost_usd:.2f}"
+        f"  ({format_tokens(snapshot.month_tokens)} tokens)\n"
+        f"ALL TIME    ${snapshot.total_cost_usd:.2f}"
+        f"  ({format_tokens(snapshot.total_tokens)} tokens)\n"
         f"updated     {stamp}"
     )
 

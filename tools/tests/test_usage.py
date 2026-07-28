@@ -96,13 +96,17 @@ class UsageAggregationTest(unittest.TestCase):
 
     def insert_rollup(self, date: str, app_type: str = "codex", *,
                       cost: str = "0", request_count: int = 1,
-                      provider_id: str = "_session") -> None:
+                      provider_id: str = "_session",
+                      input_tokens: int = 0, output_tokens: int = 0,
+                      cache_read: int = 0, cache_creation: int = 0) -> None:
         """写一条归档记录。date 为 'YYYY-MM-DD' 本地日期。"""
         connection = sqlite3.connect(self.db_path)
         connection.execute(
             "INSERT INTO usage_daily_rollups (date, app_type, provider_id,"
-            " request_count, total_cost_usd) VALUES (?,?,?,?,?)",
-            (date, app_type, provider_id, request_count, cost),
+            " request_count, input_tokens, output_tokens, cache_read_tokens,"
+            " cache_creation_tokens, total_cost_usd) VALUES (?,?,?,?,?,?,?,?,?)",
+            (date, app_type, provider_id, request_count, input_tokens,
+             output_tokens, cache_read, cache_creation, cost),
         )
         connection.commit()
         connection.close()
@@ -182,6 +186,8 @@ class UsageAggregationTest(unittest.TestCase):
         self.assertAlmostEqual(snapshot.today_cost_usd, 1.00)
         self.assertEqual(snapshot.today_tokens, 10)
         self.assertAlmostEqual(snapshot.month_cost_usd, 5.00)
+        # 四个 Token 数与四个金额走的是同一套时间窗，不能只对金额分档。
+        self.assertEqual(snapshot.month_tokens, 30)
 
     def test_week_includes_today_on_monday(self) -> None:
         """周一当天本周花费不能为空。
@@ -194,6 +200,7 @@ class UsageAggregationTest(unittest.TestCase):
         snapshot = read_snapshot(self.db_path)
 
         self.assertAlmostEqual(snapshot.week_cost_usd, 7.00)
+        self.assertEqual(snapshot.week_tokens, 10)
 
     def test_total_spans_logs_and_archive(self) -> None:
         """总计要把归档表加进来。
@@ -202,13 +209,32 @@ class UsageAggregationTest(unittest.TestCase):
         里。只算日志会让总计随保留窗口滑动而缩水，越久越少。
         """
         self.insert("a", "codex", _epoch(), cost="10.00", input_tokens=10)
-        self.insert_rollup(self._date(200), cost="90.00")
+        self.insert_rollup(self._date(200), cost="90.00", input_tokens=90)
 
         snapshot = read_snapshot(self.db_path)
 
         self.assertAlmostEqual(snapshot.total_cost_usd, 100.00)
+        self.assertEqual(snapshot.total_tokens, 100)
         # 归档数据不该渗进本月，那是另一套时间窗。
         self.assertAlmostEqual(snapshot.month_cost_usd, 10.00)
+        self.assertEqual(snapshot.month_tokens, 10)
+
+    def test_archive_tokens_follow_app_type_rule(self) -> None:
+        """归档层的 Token 口径与日志层一致，同样按 app_type 区分。
+
+        两张表的列名相同，很容易顺手把归档写成「四项全加」。真那样的话总计
+        Token 会凭空多出缓存部分，而金额却是对的，屏幕上看不出问题。
+        """
+        self.insert_rollup(self._date(200), "codex", cost="1.00",
+                           input_tokens=1000, output_tokens=100,
+                           cache_read=800, cache_creation=50)
+        self.insert_rollup(self._date(201), "claude", cost="1.00",
+                           input_tokens=1000, output_tokens=100,
+                           cache_read=800, cache_creation=50)
+
+        snapshot = read_snapshot(self.db_path)
+
+        self.assertEqual(snapshot.total_tokens, 1100 + 1950)
 
     def test_archive_days_covered_by_logs_are_skipped(self) -> None:
         """日志和归档同时有某天时只算日志，不能双计。
@@ -218,11 +244,12 @@ class UsageAggregationTest(unittest.TestCase):
         """
         today = self._date(0)
         self.insert("a", "codex", _epoch(), cost="10.00", input_tokens=10)
-        self.insert_rollup(today, cost="999.00")
+        self.insert_rollup(today, cost="999.00", input_tokens=999)
 
         snapshot = read_snapshot(self.db_path)
 
         self.assertAlmostEqual(snapshot.total_cost_usd, 10.00)
+        self.assertEqual(snapshot.total_tokens, 10)
 
     def test_total_equals_month_when_no_archive(self) -> None:
         """没有归档数据时，总计就等于日志的全部。"""
@@ -262,6 +289,7 @@ class UsageAggregationTest(unittest.TestCase):
 
         self.assertAlmostEqual(snapshot.today_cost_usd, 5.00)
         self.assertAlmostEqual(snapshot.total_cost_usd, 5.00)
+        self.assertEqual(snapshot.total_tokens, 10)
 
     def test_empty_database_returns_zeros(self) -> None:
         """没有数据时返回 0 而不是 None，否则格式化会抛异常。"""
@@ -269,8 +297,11 @@ class UsageAggregationTest(unittest.TestCase):
 
         self.assertEqual(snapshot.today_cost_usd, 0.0)
         self.assertEqual(snapshot.today_tokens, 0)
+        self.assertEqual(snapshot.week_tokens, 0)
         self.assertEqual(snapshot.month_cost_usd, 0.0)
+        self.assertEqual(snapshot.month_tokens, 0)
         self.assertEqual(snapshot.total_cost_usd, 0.0)
+        self.assertEqual(snapshot.total_tokens, 0)
 
     def test_database_opened_read_only(self) -> None:
         """连接必须拒绝写入，避免影响 CC Switch 自己的库。"""

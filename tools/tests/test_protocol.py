@@ -24,8 +24,11 @@ def _snapshot(**overrides) -> UsageSnapshot:
         "today_cost_usd": 12.48,
         "today_tokens": 9_640_000,
         "week_cost_usd": 63.21,
+        "week_tokens": 147_250_000,
         "month_cost_usd": 218.90,
+        "month_tokens": 843_600_000,
         "total_cost_usd": 1_204.55,
+        "total_tokens": 1_832_640_000,
         "updated_at": 1_785_140_000,
     }
     fields.update(overrides)
@@ -33,10 +36,10 @@ def _snapshot(**overrides) -> UsageSnapshot:
 
 
 class PacketTest(unittest.TestCase):
-    def test_packet_is_30_bytes(self) -> None:
+    def test_packet_is_42_bytes(self) -> None:
         """长度写死在固件的 static_assert 里，两边必须一致。"""
-        self.assertEqual(len(protocol.encode(_snapshot())), 30)
-        self.assertEqual(protocol.PACKET_SIZE, 30)
+        self.assertEqual(len(protocol.encode(_snapshot())), 42)
+        self.assertEqual(protocol.PACKET_SIZE, 42)
 
     def test_round_trip_preserves_values(self) -> None:
         original = _snapshot()
@@ -46,8 +49,11 @@ class PacketTest(unittest.TestCase):
         self.assertAlmostEqual(decoded.today_cost_usd, 12.48, places=3)
         self.assertEqual(decoded.today_tokens, 9_640_000)
         self.assertAlmostEqual(decoded.week_cost_usd, 63.21, places=3)
+        self.assertEqual(decoded.week_tokens, 147_250_000)
         self.assertAlmostEqual(decoded.month_cost_usd, 218.90, places=3)
+        self.assertEqual(decoded.month_tokens, 843_600_000)
         self.assertAlmostEqual(decoded.total_cost_usd, 1_204.55, places=3)
+        self.assertEqual(decoded.total_tokens, 1_832_640_000)
         self.assertEqual(decoded.updated_at, 1_785_140_000)
 
     def test_field_order_matches_spec(self) -> None:
@@ -57,33 +63,40 @@ class PacketTest(unittest.TestCase):
         错位后解出来的数依然合理,测试就形同虚设。
         """
         packet = protocol.encode(_snapshot(
-            today_cost_usd=1.0, today_tokens=2, week_cost_usd=3.0,
-            month_cost_usd=4.0, total_cost_usd=6.0, updated_at=5,
+            today_cost_usd=1.0, today_tokens=2000,
+            week_cost_usd=3.0, week_tokens=4000,
+            month_cost_usd=5.0, month_tokens=6000,
+            total_cost_usd=7.0, total_tokens=8000,
+            updated_at=9,
         ))
 
-        magic, version, flags, today, tokens, week, month, total, epoch, _crc = \
-            struct.unpack("<HBBIIIIIIH", packet)
+        (magic, version, flags, today, today_tok, week, week_tok,
+         month, month_tok, total, total_tok, epoch, _crc) = struct.unpack(
+            "<HBBIIIIIIIIIH", packet)
 
         self.assertEqual(magic, protocol.MAGIC)
         self.assertEqual(version, protocol.PROTOCOL_VERSION)
         self.assertEqual(flags, protocol.FLAG_NONE)
         self.assertEqual(today, 1000)
-        self.assertEqual(tokens, 2)
+        self.assertEqual(today_tok, 2)
         self.assertEqual(week, 3000)
-        self.assertEqual(month, 4000)
-        self.assertEqual(total, 6000)
-        self.assertEqual(epoch, 5)
+        self.assertEqual(week_tok, 4)
+        self.assertEqual(month, 5000)
+        self.assertEqual(month_tok, 6)
+        self.assertEqual(total, 7000)
+        self.assertEqual(total_tok, 8)
+        self.assertEqual(epoch, 9)
 
-    def test_total_sits_after_month(self) -> None:
-        """总计的偏移量固定在 month 之后、epoch 之前。
+    def test_epoch_sits_last_before_crc(self) -> None:
+        """时间戳的偏移量固定在全部数值之后、CRC 之前。
 
         插字段时最容易出错的就是位置:放到 epoch 后面两边都还能自洽跑通,
         但设备端解出来的时间戳会变成金额,表现为一直 OFFLINE。
         """
-        packet = protocol.encode(_snapshot(total_cost_usd=6.0, updated_at=5))
+        packet = protocol.encode(_snapshot(total_tokens=8_000, updated_at=5))
 
-        self.assertEqual(struct.unpack_from("<I", packet, 20)[0], 6000)
-        self.assertEqual(struct.unpack_from("<I", packet, 24)[0], 5)
+        self.assertEqual(struct.unpack_from("<I", packet, 32)[0], 8)
+        self.assertEqual(struct.unpack_from("<I", packet, 36)[0], 5)
 
     def test_amounts_carried_as_milli_usd(self) -> None:
         """倍率必须是 1000。用 999.99 这种值能暴露截断而不是四舍五入。"""
@@ -92,6 +105,27 @@ class PacketTest(unittest.TestCase):
         today_milli = struct.unpack_from("<I", packet, 4)[0]
 
         self.assertEqual(today_milli, 999_990)
+
+    def test_tokens_carried_as_kilo_tokens(self) -> None:
+        """Token 的倍率必须是 1/1000，且四舍五入而不是截断。
+
+        原始 u32 装不下总计（实测已 18 亿、每月涨约 15 亿），换算成千 token 才
+        有足够余量。写死这条换算，避免有人「顺手」改回原始计数。
+        """
+        packet = protocol.encode(_snapshot(today_tokens=1_500_600))
+
+        self.assertEqual(struct.unpack_from("<I", packet, 8)[0], 1501)
+
+    def test_tokens_beyond_u32_survive_as_kilo(self) -> None:
+        """超过 42.9 亿的 Token 数不能被夹住。
+
+        这正是改用千 token 的原因：按原始计数传，总计过几个月就会永远停在
+        4.29B，一个看着合理却不再变化的数。
+        """
+        decoded = protocol.decode(protocol.encode(
+            _snapshot(total_tokens=12_000_000_000)))
+
+        self.assertEqual(decoded.total_tokens, 12_000_000_000)
 
     def test_corrupted_byte_rejected(self) -> None:
         """任何一位翻转都必须被 CRC 拦住。"""
@@ -163,12 +197,15 @@ class PacketTest(unittest.TestCase):
         """全零是合法状态(比如当天还没有用量),不能被当成无效包。"""
         decoded = protocol.decode(protocol.encode(_snapshot(
             today_cost_usd=0.0, today_tokens=0,
-            week_cost_usd=0.0, month_cost_usd=0.0, total_cost_usd=0.0,
+            week_cost_usd=0.0, week_tokens=0,
+            month_cost_usd=0.0, month_tokens=0,
+            total_cost_usd=0.0, total_tokens=0,
         )))
 
         self.assertEqual(decoded.today_cost_usd, 0.0)
         self.assertEqual(decoded.today_tokens, 0)
         self.assertEqual(decoded.total_cost_usd, 0.0)
+        self.assertEqual(decoded.total_tokens, 0)
 
     def test_crc16_ccitt_known_vector(self) -> None:
         """CRC-16/CCITT-FALSE 对 "123456789" 的标准结果是 0x29B1。

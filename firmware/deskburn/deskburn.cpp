@@ -32,15 +32,22 @@ constexpr uint16_t kFootnote = 0x52AA;
 
 namespace Layout {
 // 横屏 320x240，主数据整列居中：顶部是「今日消耗」标题行，正下方是今日金额，
-// 再往下是今日 Token 数，分隔线之下是本周 / 本月两栏。
+// 再往下是今日 Token 数，分隔线之下是本周 / 本月 / 总计三栏，每栏金额下面再挂
+// 一行该周期的 Token 数。
+//
+// 纵向坐标是按各元素的实际包围盒排下来的，加第二行 Token 时整体上移过一次：
+// 240 高扣掉三行文字后余量很小，改任何一个常量前先按下面的注释重算间距，
+// 尤其是 kPeriodCostY 与 kPeriodTokensY —— updateSlot 擦除时会向外多留 2px，
+// 两者靠太近会互相啃掉对方的像素。
 constexpr int16_t kCenterX = 160;
 
-constexpr int16_t kHeaderY = 40;
-constexpr int16_t kTodayCostY = 92;
-constexpr int16_t kTodayTokensY = 136;
-constexpr int16_t kDividerY = 164;
-constexpr int16_t kPeriodLabelY = 186;
-constexpr int16_t kPeriodCostY = 214;
+constexpr int16_t kHeaderY = 32;         // 图标 34px 高，占 15..49
+constexpr int16_t kTodayCostY = 80;      // 字形 38px 高，擦除带占 57..103
+constexpr int16_t kTodayTokensY = 124;   // Font4 26px 高，擦除带占 109..139
+constexpr int16_t kDividerY = 148;
+constexpr int16_t kPeriodLabelY = 168;   // 标签 23px 高，占 157..180
+constexpr int16_t kPeriodCostY = 197;    // Font4 擦除带占 182..212
+constexpr int16_t kPeriodTokensY = 224;  // Font2 擦除带占 214..234
 
 // 标题行里「今日消耗」与两侧图标之间的留白。两枚图标相对屏幕中心对称摆放，
 // 具体坐标在 drawStaticLayout 里按各自蒙版宽度算，换图标不用改这里。
@@ -59,6 +66,9 @@ constexpr int16_t kFootnoteY = 12;
 // 金额与美元符号不再用内置字体，改用 assets.h 里烘焙的 SF Pro Bold 字形。
 constexpr uint8_t kTokensFont = 4;
 constexpr uint8_t kPeriodCostFont = 4;
+// 三栏下面那行 Token 用更小的 Font2：它是给金额做注解的，字号压下去才不会跟
+// 金额抢视线，也才在剩下的十几像素里排得开。
+constexpr uint8_t kPeriodTokensFont = 2;
 constexpr uint8_t kFootnoteFont = 1;
 }  // namespace Layout
 
@@ -67,8 +77,11 @@ struct DashboardData {
   float todayCostUsd;
   uint64_t todayTokens;
   float weekCostUsd;
+  uint64_t weekTokens;
   float monthCostUsd;
+  uint64_t monthTokens;
   float totalCostUsd;
+  uint64_t totalTokens;
   bool online;
 };
 
@@ -96,6 +109,12 @@ TextSlot g_monthCostSlot{Layout::kMonthColumnX, Layout::kPeriodCostY,
                          Layout::kPeriodCostFont, Colors::kPrimaryText, ""};
 TextSlot g_totalCostSlot{Layout::kTotalColumnX, Layout::kPeriodCostY,
                          Layout::kPeriodCostFont, Colors::kPrimaryText, ""};
+TextSlot g_weekTokensSlot{Layout::kWeekColumnX, Layout::kPeriodTokensY,
+                          Layout::kPeriodTokensFont, Colors::kSecondaryText, ""};
+TextSlot g_monthTokensSlot{Layout::kMonthColumnX, Layout::kPeriodTokensY,
+                           Layout::kPeriodTokensFont, Colors::kSecondaryText, ""};
+TextSlot g_totalTokensSlot{Layout::kTotalColumnX, Layout::kPeriodTokensY,
+                           Layout::kPeriodTokensFont, Colors::kSecondaryText, ""};
 TextSlot g_footnoteSlot{Layout::kFootnoteX, Layout::kFootnoteY,
                         Layout::kFootnoteFont, Colors::kFootnote, ""};
 
@@ -167,22 +186,41 @@ void drawAlphaBitmap(
 }
 
 /**
- * @brief 把 Token 数格式化为 K / M / B 紧凑写法。
+ * @brief 把 Token 数格式化为 K / M / B 紧凑写法，不带单位后缀。
+ *
+ * 只有真的到了十亿量级才切 B：234M 写成 0.23B 会丢掉一位有效数字，而三栏的
+ * 宽度放得下 "999.99M"，没有必要提前换单位。
+ *
+ * @param tokens 原始 Token 数。
+ * @param out 输出缓冲区。
+ * @param size 缓冲区长度。
+ */
+void formatTokensCompact(uint64_t tokens, char* out, size_t size) {
+  if (tokens >= 1000000000ULL) {
+    snprintf(out, size, "%.2fB", tokens / 1000000000.0);
+  } else if (tokens >= 1000000ULL) {
+    snprintf(out, size, "%.2fM", tokens / 1000000.0);
+  } else if (tokens >= 1000ULL) {
+    snprintf(out, size, "%.1fK", tokens / 1000.0);
+  } else {
+    snprintf(out, size, "%llu", static_cast<unsigned long long>(tokens));
+  }
+}
+
+/**
+ * @brief 今日 Token 数：紧凑写法加 "tokens" 后缀。
+ *
+ * 后缀只出现在今日这一行。它替整屏的四个 Token 数做了图例，三栏里再各写一遍
+ * 既挤不下，也只是重复。
  *
  * @param tokens 原始 Token 数。
  * @param out 输出缓冲区。
  * @param size 缓冲区长度。
  */
 void formatTokens(uint64_t tokens, char* out, size_t size) {
-  if (tokens >= 1000000000ULL) {
-    snprintf(out, size, "%.2fB tokens", tokens / 1000000000.0);
-  } else if (tokens >= 1000000ULL) {
-    snprintf(out, size, "%.2fM tokens", tokens / 1000000.0);
-  } else if (tokens >= 1000ULL) {
-    snprintf(out, size, "%.1fK tokens", tokens / 1000.0);
-  } else {
-    snprintf(out, size, "%llu tokens", static_cast<unsigned long long>(tokens));
-  }
+  char compact[12];
+  formatTokensCompact(tokens, compact, sizeof(compact));
+  snprintf(out, size, "%s tokens", compact);
 }
 
 /**
@@ -353,6 +391,16 @@ void renderDashboard(const DashboardData& data) {
   formatPeriodCost(data.totalCostUsd, periodCost, sizeof(periodCost));
   updateSlot(g_totalCostSlot, periodCost);
 
+  char periodTokens[12];
+  formatTokensCompact(data.weekTokens, periodTokens, sizeof(periodTokens));
+  updateSlot(g_weekTokensSlot, periodTokens);
+
+  formatTokensCompact(data.monthTokens, periodTokens, sizeof(periodTokens));
+  updateSlot(g_monthTokensSlot, periodTokens);
+
+  formatTokensCompact(data.totalTokens, periodTokens, sizeof(periodTokens));
+  updateSlot(g_totalTokensSlot, periodTokens);
+
   updateSlot(g_footnoteSlot, data.online ? "LIVE" : "OFFLINE");
 }
 
@@ -377,13 +425,19 @@ void setup() {
 }
 
 /// 把链路状态转成一次渲染所需的数据。
+///
+/// 链路上传的是千 token（见 link_protocol.h），这里乘回原始量级再交给格式化，
+/// 显示层就不必知道传输精度。屏幕最细只显示到 0.01M，千位以下的零头看不出来。
 DashboardData currentData() {
   DashboardData data{};
   data.todayCostUsd = Link::g_state.todayMilliUsd / 1000.0f;
-  data.todayTokens = Link::g_state.todayTokens;
+  data.todayTokens = Link::g_state.todayKiloTokens * 1000ULL;
   data.weekCostUsd = Link::g_state.weekMilliUsd / 1000.0f;
+  data.weekTokens = Link::g_state.weekKiloTokens * 1000ULL;
   data.monthCostUsd = Link::g_state.monthMilliUsd / 1000.0f;
+  data.monthTokens = Link::g_state.monthKiloTokens * 1000ULL;
   data.totalCostUsd = Link::g_state.totalMilliUsd / 1000.0f;
+  data.totalTokens = Link::g_state.totalKiloTokens * 1000ULL;
   data.online = !Link::isStale();
   return data;
 }

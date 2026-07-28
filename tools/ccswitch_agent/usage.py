@@ -1,7 +1,7 @@
 """只读聚合 CC Switch 用量数据。
 
-只做一件事：打开 ~/.cc-switch/cc-switch.db，算出今日、本周、本月、总计的花费
-和今日 Token 数。绝不写库 —— 连接以 SQLite URI 只读模式打开，写操作会直接报错。
+只做一件事：打开 ~/.cc-switch/cc-switch.db，算出今日、本周、本月、总计各自的
+花费和 Token 数。绝不写库 —— 连接以 SQLite URI 只读模式打开，写操作会直接报错。
 
 口径上有四个反直觉的地方，都是拿 model_pricing 反算成本验证过的，改动前先看
 docs/踩坑记录.md 里的对账记录：
@@ -82,7 +82,10 @@ SELECT
                       THEN tokens END), 0)   AS today_tokens,
     COALESCE(SUM(CASE WHEN created_at >= strftime('%s', {_WEEK_START})
                       THEN cost END), 0.0)   AS week_cost,
-    COALESCE(SUM(cost), 0.0)                 AS month_cost
+    COALESCE(SUM(CASE WHEN created_at >= strftime('%s', {_WEEK_START})
+                      THEN tokens END), 0)   AS week_tokens,
+    COALESCE(SUM(cost), 0.0)                 AS month_cost,
+    COALESCE(SUM(tokens), 0)                 AS month_tokens
   FROM usage
 """
 
@@ -98,43 +101,52 @@ SELECT
 #     备份 07-24   rollups 截止 06-24   logs 起于 06-25
 #     当前库       rollups 截止 06-26   logs 起于 06-29
 #
-# 归档层的口径有个已知偏差：它的成本等于日志的**原始**求和，没有做跨源去重，
-# 因此比现算路径略高。实测量级是 0.14%（$1713 里多算 $2.44），且原始行已经不在
-# 库里，无法追溯修正。总计本来就是个量级参考，这个偏差可以接受。
+# 归档层的口径有个已知偏差：它的成本和 Token 都等于日志的**原始**求和，没有做
+# 跨源去重，因此比现算路径略高。实测量级是 0.14%（$1713 里多算 $2.44），且原始
+# 行已经不在库里，无法追溯修正。总计本来就是个量级参考，这个偏差可以接受。
 #
 # 用 date NOT IN (日志覆盖的日期) 而不是写死一个分界日期：两张表的边界随保留
 # 窗口每天移动，查出来比猜稳。
+#
+# 归档表的 token 列名与日志表完全一致，所以 _TOKENS_EXPR 可以直接复用 ——
+# 归档层同样区分 app_type，不能对它另立一套累加规则。
 _ALL_TIME_QUERY = f"""
 WITH deduped AS (
     SELECT *, {_DEDUP_RANK} AS dup_rank
       FROM proxy_request_logs
 ),
 live AS (
-    SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0.0) AS cost
+    SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0.0) AS cost,
+           COALESCE(SUM({_TOKENS_EXPR}), 0)                 AS tokens
       FROM deduped
      WHERE dup_rank = 1
 ),
 archived AS (
-    SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0.0) AS cost
+    SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0.0) AS cost,
+           COALESCE(SUM({_TOKENS_EXPR}), 0)                 AS tokens
       FROM usage_daily_rollups
      WHERE date NOT IN (
                SELECT DISTINCT date(created_at, 'unixepoch', 'localtime')
                  FROM proxy_request_logs
            )
 )
-SELECT (SELECT cost FROM live) + (SELECT cost FROM archived)
+SELECT (SELECT cost FROM live) + (SELECT cost FROM archived),
+       (SELECT tokens FROM live) + (SELECT tokens FROM archived)
 """
 
 
 @dataclass(frozen=True)
 class UsageSnapshot:
-    """一次采样的聚合结果，对应屏幕上的五个数字。"""
+    """一次采样的聚合结果，对应屏幕上的四组「金额 + Token」。"""
 
     today_cost_usd: float
     today_tokens: int
     week_cost_usd: float
+    week_tokens: int
     month_cost_usd: float
+    month_tokens: int
     total_cost_usd: float
+    total_tokens: int
     updated_at: int
 
     def to_dict(self) -> dict[str, Any]:
@@ -160,24 +172,25 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _read_all_time_cost(connection: sqlite3.Connection) -> float:
-    """读总计花费。归档表缺失时退化为只算日志覆盖的部分。
+def _read_all_time(connection: sqlite3.Connection) -> tuple[float, int]:
+    """读总计花费与总计 Token。归档表缺失时退化为只算日志覆盖的部分。
 
     单独 catch 而不是让异常冒到 read_snapshot：归档表是 CC Switch 的内部结构，
     将来版本改名或删表都有可能。那种情况下屏幕上少一个总计数字可以接受，但不该
     把今日 / 本周 / 本月一起拖下水。
     """
     try:
-        return float(connection.execute(_ALL_TIME_QUERY).fetchone()[0] or 0.0)
+        row = connection.execute(_ALL_TIME_QUERY).fetchone()
     except sqlite3.OperationalError:
         row = connection.execute(f"""
             WITH deduped AS (
                 SELECT *, {_DEDUP_RANK} AS dup_rank FROM proxy_request_logs
             )
-            SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0.0)
+            SELECT COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0.0),
+                   COALESCE(SUM({_TOKENS_EXPR}), 0)
               FROM deduped WHERE dup_rank = 1
         """).fetchone()
-        return float(row[0] or 0.0)
+    return float(row[0] or 0.0), int(row[1] or 0)
 
 
 def read_snapshot(db_path: Path | str = DEFAULT_DB_PATH) -> UsageSnapshot:
@@ -189,16 +202,20 @@ def read_snapshot(db_path: Path | str = DEFAULT_DB_PATH) -> UsageSnapshot:
     connection = _connect(Path(db_path))
     try:
         row = connection.execute(_QUERY).fetchone()
-        total_cost = _read_all_time_cost(connection)
+        total_cost, total_tokens = _read_all_time(connection)
     finally:
         connection.close()
 
-    today_cost, today_tokens, week_cost, month_cost = row
+    (today_cost, today_tokens, week_cost, week_tokens,
+     month_cost, month_tokens) = row
     return UsageSnapshot(
         today_cost_usd=round(float(today_cost), 2),
         today_tokens=int(today_tokens),
         week_cost_usd=round(float(week_cost), 2),
+        week_tokens=int(week_tokens),
         month_cost_usd=round(float(month_cost), 2),
+        month_tokens=int(month_tokens),
         total_cost_usd=round(total_cost, 2),
+        total_tokens=total_tokens,
         updated_at=int(time.time()),
     )
