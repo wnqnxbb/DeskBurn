@@ -12,7 +12,7 @@ DeskBurn 使用 ESP32-C3 驱动一块 3.5 寸 TFT 屏幕。Mac 端只读 CC Swit
 ## 特性
 
 - 今日费用和 Token 数突出显示，本周、本月和累计分栏展示费用与 Token 数。
-- 同一套数据支持 Classic 与 Swiss Poster 多种展示页面，可独立编译和快速烧录切换。
+- 同一套数据支持 Classic、Swiss Poster 与 Midnight Buddy 多种展示页面，可独立编译和快速烧录切换。
 - Mac 侧以 SQLite 只读模式访问 CC Switch 数据库。
 - 使用 BLE 直连，不依赖 Wi-Fi、局域网连通性或公网中转。
 - 断线后保留最后一次有效数据，并在 90 秒超时后显示 `OFFLINE`。
@@ -90,7 +90,14 @@ pio run -e deskburn_swiss
 pio run -e deskburn_swiss -t upload
 ```
 
-两版使用相同的 BLE 协议和数据缓存，Mac 采集端无需修改。展示效果、可直接烧录的
+深色可爱陪伴页面：
+
+```bash
+pio run -e deskburn_buddy
+pio run -e deskburn_buddy -t upload
+```
+
+三版使用相同的 BLE 协议和数据缓存，Mac 采集端无需修改。展示效果、可直接烧录的
 成品固件和切换说明见[屏幕展示版本](docs/展示版本.md)，所有页面的图片与视觉说明
 见[屏幕风格图鉴](docs/屏幕风格图鉴.md)。
 
@@ -141,7 +148,8 @@ firmware/
   common/                  所有展示版本共享的数据模型
   deskburn/                正式仪表盘、BLE 从机和协议
   deskburn_swiss/          Swiss Poster 展示页面及专用资源
-  releases/                可直接烧录的 Classic / Swiss Poster 固件
+  deskburn_buddy/          Midnight Buddy 深色可爱页面及专用资源
+  releases/                可直接烧录的三套展示固件
   pin_scanner/             屏幕引脚与初始化序列扫描固件
 tools/
   ccswitch_agent/          CC Switch 聚合、协议与 BLE central
@@ -149,6 +157,7 @@ tools/
   launchd/                 macOS 自启和日志轮转模板
   generate_assets.py       SVG / 中文 / 金额字形生成器
   generate_swiss_assets.py Swiss Poster 字体、图标与预览生成器
+  generate_buddy_assets.py Midnight Buddy 字体、小精灵与预览生成器
   package_firmware.py      构建并打包所有展示版本
 docs/
   硬件说明.md
@@ -161,7 +170,7 @@ docs/
 - [硬件说明](docs/硬件说明.md)：实物照片、板卡参数、屏幕参数和引脚。
 - [踩坑记录](docs/踩坑记录.md)：屏幕、字节序、数据聚合、BLE 和烧录经验。
 - [构建流程](docs/构建流程.md)：环境准备、测试、固件构建、烧录和自启。
-- [屏幕展示版本](docs/展示版本.md)：Classic / Swiss Poster 效果、切换和固件成品。
+- [屏幕展示版本](docs/展示版本.md)：三套页面效果、切换和固件成品。
 - [屏幕风格图鉴](docs/屏幕风格图鉴.md)：当前全部页面风格、图片与源码入口。
 
 ## 安全与隐私

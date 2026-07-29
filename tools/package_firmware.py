@@ -26,6 +26,7 @@ RELEASE_DIR = PROJECT_ROOT / "firmware" / "releases"
 VARIANTS = {
     "deskburn": "DeskBurn-Classic",
     "deskburn_swiss": "DeskBurn-Swiss-Poster",
+    "deskburn_buddy": "DeskBurn-Midnight-Buddy",
 }
 
 
