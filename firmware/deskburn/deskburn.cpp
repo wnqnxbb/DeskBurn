@@ -22,9 +22,13 @@ constexpr int kBacklightGate = 6;
 
 namespace Colors {
 constexpr uint16_t kBackground = 0x0841;
-constexpr uint16_t kPrimaryText = TFT_WHITE;
-// 今日金额的绿色（#4ADE80）。深背景上亮度足够，又不像纯绿那样刺眼。
+// 所有金额统一的绿色（#4ADE80）。深背景上亮度足够，又不像纯绿那样刺眼。
 constexpr uint16_t kTodayCost = 0x4EF0;
+constexpr uint16_t kPeriodCost = kTodayCost;
+// 「今日消耗」从金额绿出发的平滑渐变：绿 / 青蓝 / 蓝紫 / 粉。四色在 HSV 空间
+// 固定饱和度和明度、沿色相环从 142° 等步长扫到 316°，标题与金额自然衔接成
+// 一条渐变带，比硬切彩虹更整体。
+constexpr uint16_t kTodayTitleColors[] = {0x4EF0, 0x4D7B, 0x725B, 0xDA56};
 constexpr uint16_t kSecondaryText = 0xAD55;
 constexpr uint16_t kDivider = 0x2945;
 // 在线复用今日金额的亮绿色；离线用柔和红色（#F87171），暗背景上醒目但不刺眼。
@@ -119,11 +123,11 @@ struct PeriodTokenSlot {
 TextSlot g_todayTokensSlot{Layout::kCenterX, Layout::kTodayTokensY,
                            Layout::kTokensFont, Colors::kSecondaryText, true, ""};
 TextSlot g_weekCostSlot{Layout::kWeekColumnX, Layout::kPeriodCostY,
-                        Layout::kPeriodCostFont, Colors::kPrimaryText, false, ""};
+                        Layout::kPeriodCostFont, Colors::kPeriodCost, true, ""};
 TextSlot g_monthCostSlot{Layout::kMonthColumnX, Layout::kPeriodCostY,
-                         Layout::kPeriodCostFont, Colors::kPrimaryText, false, ""};
+                         Layout::kPeriodCostFont, Colors::kPeriodCost, true, ""};
 TextSlot g_totalCostSlot{Layout::kTotalColumnX, Layout::kPeriodCostY,
-                         Layout::kPeriodCostFont, Colors::kPrimaryText, false, ""};
+                         Layout::kPeriodCostFont, Colors::kPeriodCost, true, ""};
 PeriodTokenSlot g_weekTokensSlot{Layout::kWeekColumnX, Layout::kPeriodTokensY,
                                  Colors::kSecondaryText, "", 0, 0};
 PeriodTokenSlot g_monthTokensSlot{Layout::kMonthColumnX, Layout::kPeriodTokensY,
@@ -464,16 +468,23 @@ void drawStaticLayout() {
   display.fillScreen(Colors::kBackground);
   display.setTextWrap(false);
 
-  // 标题行：「今日消耗」居中，OpenAI 在左、Claude 在右，三者共用一条基线。
-  // 图标中心由标签与图标的实际宽度推出，蒙版尺寸变了也仍然对称。
-  const int16_t labelHalf = Assets::kTextToday.width / 2;
+  // 标题行：「今日消耗」逐字按彩虹配色绘制，OpenAI 在左、Claude 在右，三者
+  // 共用一条基线。逐字宽度与整段渲染的宽度一致（字距按字号统一推进），因此
+  // 图标中心仍按总字宽推出，蒙版尺寸变了也仍然对称。
+  const int16_t titleWidth =
+      Assets::kTextTodayCharSpacing * (Assets::kTextTodayCharCount - 1);
+  const int16_t labelHalf = titleWidth / 2;
   const int16_t openAiOffset =
       labelHalf + Layout::kHeaderGap + Assets::kLogoOpenAi.width / 2;
   const int16_t claudeOffset =
       labelHalf + Layout::kHeaderGap + Assets::kLogoClaude.width / 2;
 
-  drawAlphaBitmap(Assets::kTextToday, Layout::kCenterX, Layout::kHeaderY,
-                  Colors::kSecondaryText);
+  for (uint8_t i = 0; i < Assets::kTextTodayCharCount; ++i) {
+    const int16_t charX = Layout::kCenterX - labelHalf +
+                          static_cast<int16_t>(i * Assets::kTextTodayCharSpacing);
+    drawAlphaBitmap(*Assets::kTextTodayChars[i], charX, Layout::kHeaderY,
+                    Colors::kTodayTitleColors[i]);
+  }
 
   // OpenAI 图标用次级灰而不是纯白，避免与今日金额争夺注意力；
   // Claude 图标沿用 SVG 自带的品牌橙。

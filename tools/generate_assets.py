@@ -26,6 +26,12 @@ OUTPUT_HEADER = PROJECT_ROOT / "firmware" / "deskburn" / "assets.h"
 # STHeiti 是 macOS 自带的黑体，笔画均匀，缩到 20 像素左右仍然清晰。
 CHINESE_FONT = "/System/Library/Fonts/STHeiti Medium.ttc"
 
+# 「今日消耗」标题用冬青黑的 W6 字重（粗体）。彩色标题在深色背景上全靠
+# 色相区分，细笔画会显得单薄；W6 的墨量比 STHeiti Medium 多约一半，
+# 22px 下笔画仍然清晰。ttc 里 index 2 是 W6，0/1 是 W3。
+TITLE_FONT = "/System/Library/Fonts/Hiragino Sans GB.ttc"
+TITLE_FONT_INDEX = 2
+
 # 今日金额用 SF Pro 的 Bold 实例烘焙。TFT_eSPI 的内置 Font 6 是 1 位点阵，
 # 没有粗体字重，重复偏移描一遍只会把边缘糊掉；离线光栅化能拿到真正的粗笔画
 # 和抗锯齿边缘。SFNS.ttf 是可变字体，Bold 是其中一个命名实例。
@@ -49,11 +55,15 @@ LOGO_SIZE = 34
 # 面板是 3.5 寸 320x240，像素密度低，中文字号偏小会明显发糊，所以比同级
 # 的 ASCII 字体再大一档。
 TEXT_ASSETS = [
-    ("kTextToday", "今日消耗", 22),
     ("kTextWeek", "本周", 24),
     ("kTextMonth", "本月", 24),
     ("kTextTotal", "总计", 24),
 ]
+
+# 「今日消耗」按单个汉字烘焙，固件里逐字上不同的颜色（彩虹配色）。
+# 逐字烘焙后每字的蒙版比整段文字小得多，flash 反而更省。
+TODAY_TITLE_CHARS = ["今", "日", "消", "耗"]
+TODAY_TITLE_PIXEL_SIZE = 22
 
 # 抗锯齿会把中文的细笔画摊成一片灰，在低密度面板上看起来就是「糊」。
 # 用一条 gamma 曲线把中间调整体抬高，笔画更实，边缘对比更硬。
@@ -214,6 +224,18 @@ def render_text_alpha(text: str, pixel_size: int) -> Image.Image:
     return crop_to_ink(canvas.point(curve))
 
 
+def render_title_alpha(text: str, pixel_size: int) -> Image.Image:
+    """用冬青黑 W6 渲染「今日消耗」的单字，笔画增强逻辑与普通标签一致。"""
+    font = ImageFont.truetype(TITLE_FONT, pixel_size, index=TITLE_FONT_INDEX)
+
+    canvas = Image.new("L", (pixel_size * len(text) * 2, pixel_size * 2), 0)
+    ImageDraw.Draw(canvas).text((pixel_size // 2, pixel_size // 2), text,
+                                font=font, fill=255)
+
+    curve = [round(255 * (value / 255) ** TEXT_ALPHA_GAMMA) for value in range(256)]
+    return crop_to_ink(canvas.point(curve))
+
+
 def format_array(name: str, image: Image.Image) -> str:
     """把蒙版导出为 C 数组，每行 16 字节便于阅读和 diff。"""
     values = list(image.tobytes())
@@ -249,6 +271,24 @@ def main() -> None:
         mask = render_text_alpha(text, pixel_size)
         sections.append(f'// "{text}"，STHeiti Medium {pixel_size}px')
         sections.append(format_array(name, mask))
+
+    # 今日标题逐字烘焙（冬青黑 W6 粗体），供固件按彩虹配色逐字上色。
+    for index, character in enumerate(TODAY_TITLE_CHARS):
+        mask = render_title_alpha(character, TODAY_TITLE_PIXEL_SIZE)
+        sections.append(
+            f'// 今日标题第 {index + 1} 字 "{character}"，'
+            f'冬青黑 W6 {TODAY_TITLE_PIXEL_SIZE}px'
+        )
+        sections.append(format_array(f"kTextTodayChar{index}", mask))
+    sections.append(
+        "// 今日标题逐字字形表与统一的字间距。\n"
+        "const AlphaBitmap* const kTextTodayChars["
+        f"{len(TODAY_TITLE_CHARS)}] = {{"
+        + ", ".join(f"&kTextTodayChar{i}" for i in range(len(TODAY_TITLE_CHARS)))
+        + "};\n"
+        f"constexpr uint16_t kTextTodayCharCount = {len(TODAY_TITLE_CHARS)};\n"
+        f"constexpr uint16_t kTextTodayCharSpacing = {TODAY_TITLE_PIXEL_SIZE + 2};\n"
+    )
 
     currency = render_currency_alpha()
     sections.append(f'// "$"，SF Pro Bold {CURRENCY_PIXEL_SIZE}px')
