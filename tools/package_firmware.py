@@ -27,6 +27,7 @@ VARIANTS = {
     "deskburn": "DeskBurn-Classic",
     "deskburn_swiss": "DeskBurn-Swiss-Poster",
     "deskburn_buddy": "DeskBurn-Midnight-Buddy",
+    "deskburn_cosmic": "DeskBurn-Cosmic-Buddy",
 }
 
 

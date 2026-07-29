@@ -1,6 +1,6 @@
 # DeskBurn 固件成品
 
-这里保存 Classic、Swiss Poster 和 Midnight Buddy 三版可烧录固件，便于从
+这里保存 Classic、Swiss Poster、Midnight Buddy 和 Cosmic Buddy 四版可烧录固件，便于从
 GitHub 下载后快速切换。
 
 | 文件 | 用途 | 写入地址 |
@@ -11,6 +11,8 @@ GitHub 下载后快速切换。
 | `DeskBurn-Swiss-Poster-full.bin` | 全新/已擦除设备完整安装瑞士海报页面 | `0x0` |
 | `DeskBurn-Midnight-Buddy-app.bin` | 已安装 DeskBurn 的设备切换到深色可爱页面，保留 NVS | `0x10000` |
 | `DeskBurn-Midnight-Buddy-full.bin` | 全新/已擦除设备完整安装深色可爱页面 | `0x0` |
+| `DeskBurn-Cosmic-Buddy-app.bin` | 已安装 DeskBurn 的设备切换到月夜精灵页面，保留 NVS | `0x10000` |
+| `DeskBurn-Cosmic-Buddy-full.bin` | 全新/已擦除设备完整安装月夜精灵页面 | `0x0` |
 
 ## 推荐：从源代码直接烧录
 
@@ -23,6 +25,9 @@ pio run -e deskburn_swiss -t upload
 
 # Midnight Buddy 版
 pio run -e deskburn_buddy -t upload
+
+# Cosmic Buddy 版
+pio run -e deskburn_cosmic -t upload
 ```
 
 ## 烧录成品 bin
@@ -48,4 +53,4 @@ esptool.py --chip esp32c3 --port /dev/cu.usbmodemXXXX \
 .venv/bin/python tools/package_firmware.py
 ```
 
-打包脚本会重新编译三个页面，并更新六个 bin 和校验文件。
+打包脚本会重新编译四个页面，并更新八个 bin 和校验文件。
