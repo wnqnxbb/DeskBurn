@@ -18,3 +18,6 @@ secrets.local.h
 # Device backups may contain local configuration and must stay private.
 backups/
 *.bin
+
+# 固件发布目录中的成品需要随源码保留，供 GitHub 用户直接下载烧录。
+!firmware/releases/*.bin

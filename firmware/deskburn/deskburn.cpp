@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 
+#include "../common/dashboard_data.h"
 #include "assets.h"
 #include "link_ble.h"
 
@@ -73,19 +74,6 @@ constexpr uint8_t kTokensFont = 4;
 constexpr uint8_t kPeriodCostFont = 4;
 constexpr uint8_t kFootnoteFont = 1;
 }  // namespace Layout
-
-/// 一次刷新所需的全部展示数据。接入 CC Switch 后由 Mac 端填充。
-struct DashboardData {
-  float todayCostUsd;
-  uint64_t todayTokens;
-  float weekCostUsd;
-  uint64_t weekTokens;
-  float monthCostUsd;
-  uint64_t monthTokens;
-  float totalCostUsd;
-  uint64_t totalTokens;
-  bool online;
-};
 
 TFT_eSPI display = TFT_eSPI();
 
