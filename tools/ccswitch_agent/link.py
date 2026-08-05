@@ -16,6 +16,12 @@ from pathlib import Path
 from bleak import BleakClient, BleakScanner
 
 from . import protocol
+from .binding import (
+    MultipleDevicesError,
+    choose_initial_binding,
+    load_binding,
+    save_binding,
+)
 from .usage import DEFAULT_DB_PATH, UsageSnapshot, read_snapshot
 
 logger = logging.getLogger(__name__)
@@ -34,8 +40,33 @@ _BACKOFF_START_SECONDS = 2.0
 _BACKOFF_MAX_SECONDS = 60.0
 
 
-async def _find_device(name: str = protocol.DEVICE_NAME):
-    """按广播名查找设备。
+def _advertised_name(device, advertisement) -> str | None:
+    """兼容不同 Bleak 后端，从扫描结果中取用户可见名称。"""
+    return advertisement.local_name or device.name
+
+
+async def discover_devices() -> list[tuple[str, object]]:
+    """扫描并返回全部使用稳定名称的 DeskBurn，按名称排序。"""
+    discovered = await BleakScanner.discover(
+        timeout=SCAN_TIMEOUT_SECONDS, return_adv=True
+    )
+    devices: dict[str, object] = {}
+    for device, advertisement in discovered.values():
+        name = _advertised_name(device, advertisement)
+        service_uuids = {uuid.lower() for uuid in advertisement.service_uuids}
+        if (protocol.is_device_name(name)
+                and protocol.SERVICE_UUID.lower() in service_uuids):
+            devices.setdefault(name, device)
+    return sorted(devices.items())
+
+
+async def list_device_names() -> list[str]:
+    """扫描附近设备，供 CLI 展示和首次显式绑定。"""
+    return [name for name, _device in await discover_devices()]
+
+
+async def _find_device(name: str):
+    """按已绑定的稳定广播名查找设备。
 
     不用地址匹配：macOS 出于隐私会把外设 MAC 换成本机生成的 UUID，换 Mac 或
     重装系统后同一块板子的地址就变了，写死地址会莫名失效。
@@ -43,6 +74,19 @@ async def _find_device(name: str = protocol.DEVICE_NAME):
     return await BleakScanner.find_device_by_name(
         name, timeout=SCAN_TIMEOUT_SECONDS
     )
+
+
+async def bind_device(device_name: str) -> None:
+    """确认目标正在广播后保存绑定，避免拼错名称造成永久重试。"""
+    if not protocol.is_device_name(device_name):
+        raise ValueError(
+            "设备名格式应为 DeskBurn- 加 12 位大写十六进制芯片 ID"
+        )
+    names = await list_device_names()
+    if device_name not in names:
+        visible = "、".join(names) if names else "无"
+        raise ValueError(f"没有发现 {device_name}；当前发现：{visible}")
+    save_binding(device_name)
 
 
 async def _push_loop(client: BleakClient, db_path: Path) -> None:
@@ -94,15 +138,34 @@ async def run(db_path: Path | str = DEFAULT_DB_PATH,
     设备断电、蓝牙关闭、Mac 睡眠唤醒这些常见中断。
     """
     backoff = _BACKOFF_START_SECONDS
+    device_name = load_binding()
 
     while True:
         try:
-            device = await _find_device()
+            if device_name is None:
+                devices = await discover_devices()
+                try:
+                    device_name = choose_initial_binding(
+                        [name for name, _device in devices]
+                    )
+                except MultipleDevicesError as error:
+                    device = None
+                    logger.warning("%s", error)
+                if device_name is not None:
+                    device = dict(devices)[device_name]
+                    save_binding(device_name)
+                    logger.info("automatically bound to %s", device_name)
+                elif not devices:
+                    device = None
+                    logger.info("no unbound DeskBurn found")
+            else:
+                device = await _find_device(device_name)
             if device is None:
                 logger.info("device not found, retrying in %.0fs", backoff)
             else:
                 async with BleakClient(device) as client:
-                    logger.info("connected to %s", device.address)
+                    logger.info("connected to %s at %s", device_name,
+                                device.address)
                     # 连上就重置退避：这次的中断与上次的原因无关。
                     backoff = _BACKOFF_START_SECONDS
                     if fake:

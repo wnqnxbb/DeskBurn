@@ -13,6 +13,7 @@
 
 #include <NimBLEDevice.h>
 #include <Preferences.h>
+#include <esp_mac.h>
 
 #include "link_protocol.h"
 
@@ -49,6 +50,22 @@ struct State {
 
 inline State g_state;
 inline Preferences g_prefs;
+
+// "DeskBurn-" + 12 位 eFuse MAC + 结尾 \0。
+inline char g_deviceName[22];
+
+/**
+ * @brief 用芯片出厂 eFuse MAC 生成稳定且无需人工配置的设备名。
+ *
+ * 不直接依赖 BLE 地址：macOS 对外暴露的是按主机随机化的 UUID。eFuse MAC 对同一
+ * 块芯片保持不变，完整保留 48 位也避免只截后几位带来的碰撞。
+ */
+inline void buildDeviceName() {
+  uint8_t mac[6]{};
+  esp_efuse_mac_get_default(mac);
+  snprintf(g_deviceName, sizeof(g_deviceName), "%s%02X%02X%02X%02X%02X%02X",
+           kDeviceNamePrefix, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 /**
  * @brief 把当前值写入 NVS。
@@ -179,7 +196,8 @@ inline void begin() {
     Serial.println("[ble] restored last values from nvs");
   }
 
-  NimBLEDevice::init(kDeviceName);
+  buildDeviceName();
+  NimBLEDevice::init(g_deviceName);
   // 包只有 42 字节，用最低发射功率省电即可。
   NimBLEDevice::setPower(ESP_PWR_LVL_P3);
 
@@ -198,7 +216,7 @@ inline void begin() {
   advertising->setScanResponse(true);
   advertising->start();
 
-  Serial.printf("[ble] advertising as %s\n", kDeviceName);
+  Serial.printf("[ble] advertising as %s\n", g_deviceName);
 }
 
 /// 距最后一个有效包是否已超时。

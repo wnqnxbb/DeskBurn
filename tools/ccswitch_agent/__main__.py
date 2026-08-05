@@ -136,6 +136,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="通过 BLE 持续推送给屏幕")
     parser.add_argument("--fake", action="store_true",
                         help="配合 --serve，推固定假数据（不读数据库）")
+    parser.add_argument("--list-devices", action="store_true",
+                        help="扫描并列出附近可绑定的 DeskBurn")
+    parser.add_argument("--bind", metavar="DEVICE",
+                        help="绑定指定设备，例如 DeskBurn-70AF0986B648")
+    parser.add_argument("--forget-device", action="store_true",
+                        help="删除已保存的设备绑定")
     parser.add_argument("--status", action="store_true",
                         help="查看自启服务状态与最近日志")
     parser.add_argument("--logs", action="store_true",
@@ -148,10 +154,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.logs:
         return follow_logs()
 
+    if args.forget_device:
+        from .binding import clear_binding
+
+        print("已删除设备绑定" if clear_binding() else "当前没有设备绑定")
+        return 0
+
+    if args.list_devices or args.bind:
+        import asyncio
+
+        from .link import bind_device, list_device_names
+
+        try:
+            if args.bind:
+                asyncio.run(bind_device(args.bind))
+                print(f"已绑定 {args.bind}")
+            else:
+                names = asyncio.run(list_device_names())
+                if names:
+                    for name in names:
+                        print(name)
+                else:
+                    print("没有发现可绑定的 DeskBurn")
+                    return 1
+        except Exception as error:
+            print(f"绑定失败：{error}", file=sys.stderr)
+            return 1
+        return 0
+
     if args.serve:
         import asyncio
         import logging
 
+        from .binding import BindingError
         from .link import run
 
         logging.basicConfig(
@@ -162,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
             asyncio.run(run(args.db, fake=args.fake))
         except KeyboardInterrupt:
             return 0
+        except BindingError as error:
+            print(f"启动失败：{error}", file=sys.stderr)
+            return 1
         return 0
 
     while True:

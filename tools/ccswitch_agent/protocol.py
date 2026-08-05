@@ -18,9 +18,21 @@ from .usage import UsageSnapshot
 SERVICE_UUID = "9d4e01ea-b59c-40a9-b128-c96b9989b633"
 USAGE_CHAR_UUID = "d00f3234-c721-4f01-bcff-a01e663303ce"
 
-# 广播名。Mac 端靠它筛选设备，不依赖 MAC 地址 —— macOS 上拿到的是随机化的
-# UUID 而不是真实 MAC，换机器或重装系统后地址会变。
-DEVICE_NAME = "DeskBurn"
+# 固件把芯片 eFuse MAC 编进广播名，例如 DeskBurn-70AF0986B648。Agent 保存这个
+# 稳定名称，不保存 macOS 为外设生成的、换机器后可能改变的 UUID。
+DEVICE_NAME_PREFIX = "DeskBurn-"
+DEVICE_ID_HEX_LENGTH = 12
+
+
+def is_device_name(name: str | None) -> bool:
+    """广播名是否符合新版 DeskBurn 的稳定设备名格式。"""
+    if not name or not name.startswith(DEVICE_NAME_PREFIX):
+        return False
+    suffix = name[len(DEVICE_NAME_PREFIX):]
+    return (
+        len(suffix) == DEVICE_ID_HEX_LENGTH
+        and all(character in "0123456789ABCDEF" for character in suffix)
+    )
 
 # 包头魔数，用来快速否掉误连设备写进来的垃圾数据。
 MAGIC = 0xCC57
