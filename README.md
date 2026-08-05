@@ -123,6 +123,18 @@ cd tools
 ../.venv/bin/python -m ccswitch_agent --serve --fake
 ```
 
+固件会把芯片 ID 自动编进广播名，例如 `DeskBurn-70AF0986B648`。首次启动 agent
+且附近只有一台时会自动绑定，并把选择保存到
+`~/Library/Application Support/DeskBurn/device.json`。附近有多台时先选择：
+
+```bash
+../.venv/bin/python -m ccswitch_agent --list-devices
+../.venv/bin/python -m ccswitch_agent --bind DeskBurn-70AF0986B648
+```
+
+更换屏幕时运行 `--forget-device`，再重新扫描绑定。设备 ID 来自 ESP32 出厂
+eFuse MAC，同一份固件可直接烧到不同开发板，不需要修改源码。
+
 确认屏幕出现测试数据后按 `Ctrl-C`，再读取真实数据库：
 
 ```bash
@@ -189,6 +201,8 @@ docs/
 - Prompt、模型回复、请求正文、Cookie、API Key 和数据库文件都不会发给 ESP32。
 - 当前 BLE characteristic 未启用配对加密。射程内设备理论上可以写入伪造数字，
   但不能借此读取 Mac 数据；合法推送会在下一轮覆盖显示。
+- Agent 只连接本机保存的稳定设备 ID，避免同一办公室内多台 DeskBurn 误连；这项
+  绑定用于设备隔离，不等同于密码或身份认证。
 - 不要提交本地数据库、设备 Flash 备份、企业网络凭据或 `secrets*.h`。
 
 ## 已知限制

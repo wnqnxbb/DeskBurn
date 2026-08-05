@@ -20,9 +20,9 @@ namespace Link {
 constexpr char kServiceUuid[] = "9d4e01ea-b59c-40a9-b128-c96b9989b633";
 constexpr char kUsageCharUuid[] = "d00f3234-c721-4f01-bcff-a01e663303ce";
 
-// 广播名。Mac 端按名字而不是地址查找：macOS 拿到的是随机化 UUID，
-// 换机器后地址会变。
-constexpr char kDeviceName[] = "DeskBurn";
+// 广播名前缀。完整名称在启动时拼成 DeskBurn-<12 位芯片 ID>，同一份固件烧到
+// 多块板子也不会同名。Mac 端保存这个稳定名称，不保存 macOS 随机化的外设地址。
+constexpr char kDeviceNamePrefix[] = "DeskBurn-";
 
 constexpr uint16_t kMagic = 0xCC57;
 
